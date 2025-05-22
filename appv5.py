@@ -3,110 +3,120 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import pydeck as pdk
 
-st.set_page_config(page_title="Análisis Logístico", layout="wide")
+st.set_page_config(page_title="Análisis Logístico Profesional", layout="wide")
 
-# -------------------- Funciones --------------------
+st.title("📊 Análisis de Eficiencia Logística")
+st.markdown("""
+Sube tu archivo Excel con datos de entregas.  
+**Columnas obligatorias:** fecha, vehiculo_id, conductor, zona, n_entregas, tiempo_total, combustible_usado, km_recorridos, incidencias, latitud, longitud
+""")
 
-def cargar_datos(archivo):
+uploaded_file = st.file_uploader("Sube archivo Excel (.xlsx)", type=["xlsx"])
+
+if uploaded_file:
     try:
-        df = pd.read_excel(archivo)
-        return df
+        df = pd.read_excel(uploaded_file, engine="openpyxl")
     except Exception as e:
         st.error(f"❌ Error al leer el archivo: {e}")
-        return None
+        st.stop()
 
-def validar_columnas(df):
-    columnas_obligatorias = [
-        "fecha", "vehiculo_id", "conductor", "zona",
-        "n_entregas", "tiempo_total", "combustible_usado", 
-        "km_recorridos", "incidencias", "latitud", "longitud"
-    ]
-    faltantes = [col for col in columnas_obligatorias if col not in df.columns]
-    if faltantes:
-        st.error(f"❌ Faltan columnas en el archivo: {faltantes}")
-        return False
-    return True
+    # Columnas obligatorias
+    expected_cols = ["fecha", "vehiculo_id", "conductor", "zona", "n_entregas", "tiempo_total",
+                     "combustible_usado", "km_recorridos", "incidencias", "latitud", "longitud"]
+    missing = [c for c in expected_cols if c not in df.columns]
+    if missing:
+        st.error(f"❌ Faltan columnas obligatorias: {missing}")
+        st.stop()
 
-def mostrar_metricas(df):
-    col1, col2, col3 = st.columns(3)
-    col1.metric("📦 Total de Entregas", int(df["n_entregas"].sum()))
-    col2.metric("⛽ Combustible Usado", f'{df["combustible_usado"].sum():.2f} L')
-    col3.metric("🛣️ KM Recorridos", f'{df["km_recorridos"].sum():.2f} km')
+    # Convertir columnas a numéricas
+    for col in ["n_entregas", "tiempo_total", "combustible_usado", "km_recorridos", "latitud", "longitud"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-def mostrar_graficos(df):
-    st.subheader("📊 Comparativas")
+    # Quitar filas con datos faltantes en columnas clave
+    df.dropna(subset=["n_entregas", "tiempo_total", "latitud", "longitud"], inplace=True)
 
-    fig, axs = plt.subplots(1, 2, figsize=(14, 5))
+    # Calcular eficiencia = entregas / tiempo_total (minutos o horas según datos)
+    df["eficiencia"] = df["n_entregas"] / df["tiempo_total"]
+    df["eficiencia"].replace([float('inf'), -float('inf')], pd.NA, inplace=True)
+    df.dropna(subset=["eficiencia"], inplace=True)
 
+    st.subheader("Datos cargados y procesados:")
+    st.dataframe(df.head())
+
+    # Agrupar por vehículo para análisis
     df_agrupado = df.groupby("vehiculo_id").agg({
         "n_entregas": "sum",
-        "combustible_usado": "sum"
-    })
+        "tiempo_total": "sum",
+        "combustible_usado": "sum",
+        "km_recorridos": "sum",
+        "eficiencia": "mean"
+    }).reset_index()
 
-    df_agrupado["eficiencia"] = df_agrupado["n_entregas"] / df_agrupado["combustible_usado"]
+    st.subheader("Análisis por vehículo")
+    st.dataframe(df_agrupado)
 
-    df_agrupado["eficiencia"].plot(kind="bar", ax=axs[0], color="green")
-    axs[0].set_title("Eficiencia por Vehículo (Entregas por Litro)")
-    axs[0].set_ylabel("Entregas/Litro")
-    axs[0].tick_params(axis='x', rotation=45)
+    # Graficar
+    fig, axs = plt.subplots(2, 2, figsize=(14,10))
+    axs = axs.flatten()
 
-    df_agrupado["combustible_usado"].plot(kind="bar", ax=axs[1], color="orange")
-    axs[1].set_title("Consumo de Combustible por Vehículo")
+    # Gráfica 1: eficiencia
+    if not df_agrupado["eficiencia"].empty:
+        axs[0].bar(df_agrupado["vehiculo_id"], df_agrupado["eficiencia"], color="green")
+        axs[0].set_title("Eficiencia (entregas / tiempo total)")
+        axs[0].set_xlabel("Vehículo ID")
+        axs[0].set_ylabel("Eficiencia")
+    else:
+        st.warning("No hay datos válidos para graficar eficiencia.")
+
+    # Gráfica 2: Combustible usado
+    axs[1].bar(df_agrupado["vehiculo_id"], df_agrupado["combustible_usado"], color="orange")
+    axs[1].set_title("Combustible Usado")
+    axs[1].set_xlabel("Vehículo ID")
     axs[1].set_ylabel("Litros")
-    axs[1].tick_params(axis='x', rotation=45)
 
+    # Gráfica 3: Kilómetros recorridos
+    axs[2].bar(df_agrupado["vehiculo_id"], df_agrupado["km_recorridos"], color="blue")
+    axs[2].set_title("Kilómetros Recorridos")
+    axs[2].set_xlabel("Vehículo ID")
+    axs[2].set_ylabel("Km")
+
+    # Gráfica 4: Número de entregas
+    axs[3].bar(df_agrupado["vehiculo_id"], df_agrupado["n_entregas"], color="purple")
+    axs[3].set_title("Número de Entregas")
+    axs[3].set_xlabel("Vehículo ID")
+    axs[3].set_ylabel("Entregas")
+
+    plt.tight_layout()
     st.pyplot(fig)
 
-def mostrar_mapa(df):
-    st.subheader("🗺️ Mapa Interactivo de Entregas")
+    # Mapa interactivo con pydeck
+    st.subheader("Mapa Interactivo de Entregas")
 
-    df_map = df.dropna(subset=["latitud", "longitud"])
-
-    capa = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_map,
-        get_position='[longitud, latitud]',
-        get_color='[255, 0, 0, 160]',
-        get_radius=100,
-        pickable=True
-    )
-
-    vista = pdk.ViewState(
-        latitude=df_map["latitud"].mean(),
-        longitude=df_map["longitud"].mean(),
-        zoom=11,
-        pitch=0
-    )
-
-    st.pydeck_chart(pdk.Deck(
-        map_style="mapbox://styles/mapbox/streets-v12",
-        initial_view_state=vista,
-        layers=[capa],
-        tooltip={"text": "Zona: {zona}\nConductor: {conductor}\nEntregas: {n_entregas}"}
-    ))
-
-# -------------------- App principal --------------------
-
-st.title("🚚 Análisis de Eficiencia Logística")
-st.write("Sube un archivo Excel (.xlsx) con los datos de tus operaciones para analizar eficiencia, consumo y ubicación.")
-
-archivo = st.file_uploader("📂 Sube tu archivo Excel", type=["xlsx"])
-
-if archivo:
-    df = cargar_datos(archivo)
-
-    if df is not None and validar_columnas(df):
-        st.success("✅ Archivo cargado correctamente.")
-        st.dataframe(df.head())
-
-        mostrar_metricas(df)
-        mostrar_graficos(df)
-        mostrar_mapa(df)
+    if not df.empty:
+        midpoint = (df["latitud"].mean(), df["longitud"].mean())
+        st.pydeck_chart(pdk.Deck(
+            map_style='mapbox://styles/mapbox/light-v9',
+            initial_view_state=pdk.ViewState(
+                latitude=midpoint[0],
+                longitude=midpoint[1],
+                zoom=10,
+                pitch=0,
+            ),
+            layers=[
+                pdk.Layer(
+                    'ScatterplotLayer',
+                    data=df,
+                    get_position='[longitud, latitud]',
+                    get_color='[200, 30, 0, 160]',
+                    get_radius=100,
+                    pickable=True,
+                    auto_highlight=True,
+                ),
+            ],
+            tooltip={"text": "Vehículo: {vehiculo_id}\nConductor: {conductor}\nZona: {zona}\nEntregas: {n_entregas}"}
+        ))
     else:
-        st.warning("⚠️ Asegúrate de que tu archivo tenga todas las columnas necesarias.")
+        st.warning("No hay datos geográficos para mostrar en el mapa.")
+
 else:
-    st.info("👆 Esperando que subas un archivo .xlsx para comenzar...")
-    if "eficiencia" in df_agrupado.columns and pd.api.types.is_numeric_dtype(df_agrupado["eficiencia"]):
-    df_agrupado["eficiencia"].plot(kind="bar", ax=axs[0], color="green")
-else:
-    st.warning("No hay datos numéricos válidos para graficar la eficiencia.")
+    st.info("📁 Por favor, sube un archivo Excel para comenzar el análisis.")
