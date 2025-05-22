@@ -106,3 +106,7 @@ if archivo:
         st.warning("⚠️ Asegúrate de que tu archivo tenga todas las columnas necesarias.")
 else:
     st.info("👆 Esperando que subas un archivo .xlsx para comenzar...")
+    if "eficiencia" in df_agrupado.columns and pd.api.types.is_numeric_dtype(df_agrupado["eficiencia"]):
+    df_agrupado["eficiencia"].plot(kind="bar", ax=axs[0], color="green")
+else:
+    st.warning("No hay datos numéricos válidos para graficar la eficiencia.")
